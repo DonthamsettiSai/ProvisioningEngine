@@ -1,7 +1,5 @@
 package com.knot.provisioning.daoimpl;
 
-
-
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -36,241 +34,265 @@ import com.knot.provisioning.utill.FileUtil;
 @Repository
 public class WorkOrderDaoImpl implements WorkOrderDao {
 
-	
+    private static final String STATUS2 = "status";
+    private static final Logger log = LogManager.getLogger(WorkOrderDaoImpl.class);
 
-	private static final String STATUS2 = "status";
+    private EntityManager em;
+    private CacheDao cache;
+    private Gson gson;
+    private OMSNetwork omsNet;
 
-	private static final Logger log = LogManager.getLogger(WorkOrderDaoImpl.class);
+    @Autowired
+    public void setCache(CacheDao cache) {
+        this.cache = cache;
+    }
 
-	private EntityManager em;
-	private CacheDao cache;
-	private Gson gson;
-	
-	@Autowired
-	public void setCache(CacheDao cache) {
-		this.cache = cache;
-	}
+    public EntityManager getEm() {
+        return em;
+    }
 
-	public EntityManager getEm() {
-		return em;
-	}
+    @PersistenceContext
+    public void setEm(EntityManager em) {
+        this.em = em;
+    }
 
-	@PersistenceContext
-	public void setEm(EntityManager em) {
-		this.em = em;
-	}
+    @Autowired
+    public void setOmsNet(OMSNetwork omsNet) {
+        this.omsNet = omsNet;
+    }
 
-	
-	private OMSNetwork omsNet;
+    @Autowired
+    public void setGson(Gson gson) {
+        this.gson = gson;
+    }
 
-	@Autowired
-	public void setOmsNet(OMSNetwork omsNet) {
-		this.omsNet = omsNet;
-	}
-	
-	@Autowired
-	public void setGson(Gson gson) {
-		this.gson = gson;
-	}
+    @Override
+    @Transactional
+    public boolean saveProvisioningRequestObjects(
+            Entry<BigInteger, Map<ProvisioningRequest, List<ProvisioningRequestDetails>>> entry) throws Exception {
+        if (entry == null || entry.getKey() == null || entry.getValue() == null || entry.getValue().isEmpty()) {
+            log.warn("saveProvisioningRequestObjects called with empty entry. workOrderId={}", entry != null ? entry.getKey() : null);
+            return false;
+        }
 
-	@Override
-	@Transactional
-		
-		public boolean saveProvisioningRequestObjects(Entry<BigInteger, Map<ProvisioningRequest, List<ProvisioningRequestDetails>>> entry) throws Exception {log.info("Started WorkOrderDaoImpl :: saveProvisioningRequestObjects() ");
-		String sequenceNo;
+        BigInteger workOrderID = entry.getKey();
+        Map<ProvisioningRequest, List<ProvisioningRequestDetails>> provMap = entry.getValue();
+        Iterator<Entry<ProvisioningRequest, List<ProvisioningRequestDetails>>> iterator = provMap.entrySet().iterator();
 
-		BigInteger seqNo;
+        int status = cache.intConfigVal(Constants.GENERATION_FAILED, Constants.GLOBAL_TENANT);
+        String description = "Provisioning request generation failed";
+        BigInteger lastRequestId = null;
 
-		BigInteger workOrderID = entry.getKey();
-		Map<ProvisioningRequest, List<ProvisioningRequestDetails>> provMap = entry.getValue();
-		Iterator<Entry<ProvisioningRequest, List<ProvisioningRequestDetails>>> it = provMap.entrySet().iterator();
-		int status = 0;
-		FileUtil util =new FileUtil();
-		ProvisioningRequest provisioningRequest = null;
-		String tenantReqId = "";
-		BigInteger tenantID = null;
-		String inputJson = "";
-		String description = "";
-		while (it.hasNext()) {
+        while (iterator.hasNext()) {
+            Entry<ProvisioningRequest, List<ProvisioningRequestDetails>> entry1 = iterator.next();
+            if (entry1 == null || entry1.getKey() == null || entry1.getValue() == null) {
+                log.warn("Skipping empty provisioning request record for workOrderId={}", workOrderID);
+                continue;
+            }
 
-			BigInteger requestID = BigInteger.ZERO;
-			try {
-				log.debug("Entered in While loop condtion To save The request and request Details ");
-				Map.Entry<ProvisioningRequest, List<ProvisioningRequestDetails>> entry1 = it.next();
-				sequenceNo = this.getSeqNumber(cache.strConfigVal(Constants.PROV_REQ_SEQ_NAME, Constants.GLOBAL_TENANT));
+            try {
+                ProvisioningRequest provisioningRequest = entry1.getKey();
+                BigInteger tenantID = provisioningRequest.getTenantID();
+                if (tenantID == null) {
+                    log.warn("Tenant ID missing for workOrderId={}", workOrderID);
+                    continue;
+                }
 
-				seqNo = new BigInteger(sequenceNo);
-				requestID = seqNo;
-				provisioningRequest = entry1.getKey();
-				provisioningRequest.setRequestID(seqNo);
-				tenantID = provisioningRequest.getTenantID();
-				tenantReqId = util.getFormatName(Constants.METHOD,String.valueOf(provisioningRequest.getTenantID()));
-				provisioningRequest.setTenantRequestID(tenantReqId);
-				log.debug("Saving the Provisioning Request objects :: requestObj {}", gson.toJson(provisioningRequest));
-//				provisioningRequest = em.merge(provisioningRequest);
-				log.debug("Saved SucessFully ::::::::: ");
+                String sequenceNo = this.getSeqNumber(cache.strConfigVal(Constants.PROV_REQ_SEQ_NAME, Constants.GLOBAL_TENANT));
+                if (sequenceNo == null || sequenceNo.trim().isEmpty()) {
+                    throw new IllegalStateException("Failed to generate request sequence number for tenantId=" + tenantID);
+                }
 
-				List<ProvisioningRequestDetails> detailsList = entry1.getValue();
-				for (ProvisioningRequestDetails Obj : detailsList) {
-					Obj.setRequestID(seqNo);
-					sequenceNo = this.getSeqNumber(cache.strConfigVal(Constants.PROV_REQ_DTL_SEQ_NAME, Constants.GLOBAL_TENANT));
+                BigInteger requestID = new BigInteger(sequenceNo);
+                lastRequestId = requestID;
+                provisioningRequest.setRequestID(requestID);
+                provisioningRequest.setTenantRequestID(
+                        new FileUtil().getFormatName(Constants.METHOD, String.valueOf(provisioningRequest.getTenantID())));
 
-					BigInteger seqNo1 = new BigInteger(sequenceNo);
-					if(Obj.getRequestObject() !=null && Obj.getRequestObject().contains(Constants.REQ_DTL_ID)) {
-						 inputJson = Obj.getRequestObject();
-						String orderParam = cache.strConfigVal(Constants.ORDER_PARAM, tenantID.toString());
-						 if(inputJson.contains(orderParam+Constants.REQ_DTL_ID) || inputJson.contains("r|"+Constants.REQ_DTL_ID)) {
-							 inputJson = inputJson.replace(orderParam+Constants.REQ_DTL_ID, String.valueOf(seqNo1));	
-							 inputJson = inputJson.replace("r|"+Constants.REQ_DTL_ID, String.valueOf(seqNo1));
-							 Obj.setRequestObject(inputJson);
-							 }
-					} if(inputJson.contains(cache.strConfigVal(Constants.ORDER_PARAM, tenantID.toString()))){ 
-						log.error("Order Parameters are not replaced !!! for Work Order  {}", workOrderID);
-						log.error("inputJson {} ",inputJson);
-						description = cache.strConfigVal(Constants.PARAM_REPLACE_ERROR, tenantID.toString());
-						status = cache.intConfigVal(Constants.GENERATION_FAILED, Constants.GLOBAL_TENANT);
-						omsNet.updateWorkOrder(workOrderID,description,status, tenantID, false);
-				}else {
-					Obj.setRequestDetailID(seqNo1);
-					log.debug("Saving The Provisioning Request Details :: requestDetailsObj {}", gson.toJson(provisioningRequest));
-					em.merge(Obj);
-					provisioningRequest = em.merge(provisioningRequest);
-					status = cache.intConfigVal(Constants.REQUEST_GEN_SUCCESS, Constants.GLOBAL_TENANT);
-					description = "Generation successd";
-					log.debug("Saved SucessFully ::::::::: ");
-				}
-			}
+                List<ProvisioningRequestDetails> detailsList = entry1.getValue();
+                for (ProvisioningRequestDetails detail : detailsList) {
+                    if (detail == null) {
+                        continue;
+                    }
 
-//				status = cache.intConfigVal(Constants.REQUEST_GEN_SUCCESS, Constants.GLOBAL_TENANT);
-				log.info("Ended WorkOrderDaoImpl :: saveProvisioningRequestObjects() ");
-			} catch (Exception e) {
-				log.error("Error from WorkOrderDaoImpl - saveProvisioningRequestObjects() ", e);
-				status = cache.intConfigVal(Constants.GENERATION_FAILED, Constants.GLOBAL_TENANT);
-			} finally {
-				try {
-					omsNet.updateWorkOrder(workOrderID, description, status, provisioningRequest.getTenantID(), true);
-					log.info(" request  created sucessFully for workOrder :: {}" ,provisioningRequest.getWorkOrderID() );
-				} catch (Exception e) {
-					log.error("Error from WorkOrderDaoImpl - updateWorkOrderError() ", e);
-					status = cache.intConfigVal(Constants.GENERATION_FAILED, Constants.GLOBAL_TENANT);
+                    detail.setRequestID(requestID);
+                    String detailSeqNo = this.getSeqNumber(cache.strConfigVal(Constants.PROV_REQ_DTL_SEQ_NAME, Constants.GLOBAL_TENANT));
+                    if (detailSeqNo == null || detailSeqNo.trim().isEmpty()) {
+                        throw new IllegalStateException("Failed to generate request detail sequence number for workOrderId=" + workOrderID);
+                    }
 
-				}
-			}
-			if (status == cache.intConfigVal(Constants.REQUEST_GEN_SUCCESS, Constants.GLOBAL_TENANT)) {
-				return generateGroups(requestID);
-			}
-		}
-		return false;
-	}
+                    BigInteger detailId = new BigInteger(detailSeqNo);
+                    detail.setRequestDetailID(detailId);
 
+                    String inputJson = detail.getRequestObject();
+                    if (inputJson != null && inputJson.contains(Constants.REQ_DTL_ID)) {
+                        String orderParam = cache.strConfigVal(Constants.ORDER_PARAM, tenantID.toString());
+                        if (inputJson.contains(orderParam + Constants.REQ_DTL_ID) || inputJson.contains("r|" + Constants.REQ_DTL_ID)) {
+                            inputJson = inputJson.replace(orderParam + Constants.REQ_DTL_ID, String.valueOf(detailId));
+                            inputJson = inputJson.replace("r|" + Constants.REQ_DTL_ID, String.valueOf(detailId));
+                            detail.setRequestObject(inputJson);
+                        }
+                    }
 
-		private boolean generateGroups(BigInteger requestID) {
-		try {
-			log.info("Start WorkOrderDaoImpl :: generateGroups()" );
-			Query query = em.createNativeQuery("call UpdateGrpSubGrps( :requestID, @res )");
-			query.setParameter("requestID", requestID);
-			query.executeUpdate();
-			return updateProvRequest(requestID, cache.intConfigVal(Constants.NEGOTIATION_PROGRESS, Constants.GLOBAL_TENANT));
-		} catch (Exception e) {
-			log.error("Error from WorkOrderDaoImpl - generateGroups() ", e);
-		}
-		return false;
-	}
+                    if (inputJson != null && inputJson.contains(cache.strConfigVal(Constants.ORDER_PARAM, tenantID.toString()))) {
+                        log.error("Order parameters not replaced for workOrderId={}, tenantId={}, requestObject={}",
+                                workOrderID, tenantID, inputJson);
+                        description = cache.strConfigVal(Constants.PARAM_REPLACE_ERROR, tenantID.toString());
+                        status = cache.intConfigVal(Constants.GENERATION_FAILED, Constants.GLOBAL_TENANT);
+                        omsNet.updateWorkOrder(workOrderID, description, status, tenantID, false);
+                        continue;
+                    }
 
-	public String getSeqNumber(String id) {
-		try {
-			log.info("Sequence No creation for :- {}!!!",id);
-			StoredProcedureQuery query = em.createStoredProcedureQuery("GET_SEQUENCE_ID");
-			query.registerStoredProcedureParameter("P_IDNAME", String.class, ParameterMode.IN);
-			query.registerStoredProcedureParameter("P_NEXTID", String.class, ParameterMode.OUT);
-			query.registerStoredProcedureParameter("P_RESULT", String.class, ParameterMode.OUT);
-			query.setParameter("P_IDNAME", id);
-			query.execute();
-			String sequenceNo = (String) query.getOutputParameterValue("P_NEXTID");
-			log.info("sequence Number :: {}" ,sequenceNo);
-			return sequenceNo;
-		} catch (Exception e) {
-			log.error("Error from WorkOrderDaoImpl - getSeqNumber() ", e);
+                    em.merge(detail);
+                }
 
-			return null;
-		}
-	}
+                em.merge(provisioningRequest);
+                status = cache.intConfigVal(Constants.REQUEST_GEN_SUCCESS, Constants.GLOBAL_TENANT);
+                description = "Generation succeeded";
+                log.info("Provisioning request saved successfully. workOrderId={}, requestId={}, tenantId={}",
+                        workOrderID, requestID, tenantID);
+            } catch (Exception e) {
+                log.error("Error while saving provisioning request for workOrderId={}", workOrderID, e);
+                status = cache.intConfigVal(Constants.GENERATION_FAILED, Constants.GLOBAL_TENANT);
+                description = cache.strConfigVal(Constants.DEFAULT_ERROR, (entry1.getKey() != null ? entry1.getKey().getTenantID() != null ? entry1.getKey().getTenantID().toString() : Constants.GLOBAL_TENANT : Constants.GLOBAL_TENANT));
+            } finally {
+                try {
+                    if (provisioningRequestAwareStatusUpdate(workOrderID, description, status)) {
+                        log.info("Work order status update completed for workOrderId={} with status={}", workOrderID, status);
+                    }
+                } catch (Exception updateEx) {
+                    log.error("Failed to update work order status for workOrderId={}", workOrderID, updateEx);
+                }
+            }
+        }
 
-	@Transactional
+        if (status == cache.intConfigVal(Constants.REQUEST_GEN_SUCCESS, Constants.GLOBAL_TENANT) && lastRequestId != null) {
+            return generateGroups(lastRequestId);
+        }
+        return false;
+    }
 
-		public boolean updateProvRequest(BigInteger requestID, int status) {
-		boolean flag = false;
-		StringBuilder builder = new StringBuilder();
-		try {
-			log.info("Strated WorkOrderDaoImpl :: updateProvRequest() ");
-			log.debug("Enterd WorkOrderDaoImpl :: updateProvRequest() requestID {}, status {}",requestID , status);
-			builder.append("UPDATE provisioning_requests SET STATUS = :status ");
-			builder.append(" WHERE REQUEST_ID = :requestID ");
-			Query modelQuery = em.createNativeQuery(builder.toString());
-			modelQuery.setParameter(STATUS2, status).setParameter("requestID", requestID);
-			modelQuery.executeUpdate();
-			flag = true;
-			log.debug("Response Result Flag excueted by ", flag);
-			log.info("Ended WorkOrderDaoImpl :: updateProvRequest() ");
-		} catch (Exception e) {
-			log.error("Error from WorkOrderDaoImpl - updateProvRequest() ", e);
-		}
-		return flag;
-	}
+    private boolean provisioningRequestAwareStatusUpdate(BigInteger workOrderID, String description, int status) {
+        if (workOrderID == null) {
+            return false;
+        }
+        try {
+            ProvisioningRequest request = em.find(ProvisioningRequest.class, workOrderID);
+            if (request == null || request.getTenantID() == null) {
+                return false;
+            }
+            omsNet.updateWorkOrder(workOrderID, description, status, request.getTenantID(), true);
+            return true;
+        } catch (Exception e) {
+            log.error("Unable to update work order status for workOrderId={}", workOrderID, e);
+            return false;
+        }
+    }
 
-	@Transactional
-	public boolean saveProvisioningRequestGenerationError(ProvisioningRequestGenerationError obj) {
-		try {
-			log.info("Started WorkOrderDaoImpl :: saveProvisioningRequestGenerationError () ");
-			log.debug("Entred in WorkOrderDaoImpl :: saveProvisioningRequestGenerationErrorobj {}", gson.toJson(obj));
-			String sequenceNo = this.getSeqNumber(cache.strConfigVal(Constants.ERROR_REC_ID_SEQ_NAME, Constants.GLOBAL_TENANT));
+    private boolean generateGroups(BigInteger requestID) {
+        try {
+            log.info("Start WorkOrderDaoImpl :: generateGroups() requestId={}", requestID);
+            Query query = em.createNativeQuery("call UpdateGrpSubGrps( :requestID, @res )");
+            query.setParameter("requestID", requestID);
+            query.executeUpdate();
+            return updateProvRequest(requestID, cache.intConfigVal(Constants.NEGOTIATION_PROGRESS, Constants.GLOBAL_TENANT));
+        } catch (Exception e) {
+            log.error("Error from WorkOrderDaoImpl - generateGroups()", e);
+        }
+        return false;
+    }
 
-			BigInteger seqNo = new BigInteger(sequenceNo);
-			log.debug("sequenceNo {}", seqNo);
-			obj.setErrorRecordID(seqNo);
-			em.merge(obj);
-			log.info("Ended WorkOrderDaoImpl :: saveProvisioningRequestGenerationError () ");
-			return true;
-		} catch (Exception e) {
-			log.error("Error from WorkOrderDaoImpl - saveProvisioningRequestGenerationError() ", e);
-			return false;
-		}
-	}
+    public String getSeqNumber(String id) {
+        try {
+            log.info("Sequence No creation for :- {}!!!", id);
+            StoredProcedureQuery query = em.createStoredProcedureQuery("GET_SEQUENCE_ID");
+            query.registerStoredProcedureParameter("P_IDNAME", String.class, ParameterMode.IN);
+            query.registerStoredProcedureParameter("P_NEXTID", String.class, ParameterMode.OUT);
+            query.registerStoredProcedureParameter("P_RESULT", String.class, ParameterMode.OUT);
+            query.setParameter("P_IDNAME", id);
+            query.execute();
+            String sequenceNo = (String) query.getOutputParameterValue("P_NEXTID");
+            log.info("sequence Number :: {}", sequenceNo);
+            return sequenceNo;
+        } catch (Exception e) {
+            log.error("Error from WorkOrderDaoImpl - getSeqNumber()", e);
+            return null;
+        }
+    }
 
-	@SuppressWarnings("unchecked")
-	public List<ProvisioningRequestObjectsBO> getProvRequesObjects(Integer serviceID, Integer activityID,
-			Integer actionID, Integer paymentID) {
-		Query modelQuery = null;
-		List<ProvisioningRequestObjectsBO> provisioningReqObj = new ArrayList<>();
-		StringBuilder builder = new StringBuilder();
-		try {
-			log.info("Started WorkOrderDaoImpl :: getProvRequesObjects () ");
-			log.debug("Enterd into WorkOrderDaoImpl :: getProvRequesObjects () By Passing as Arguments serviceID {}, activityID {}, actionID {}, paymentID {}", serviceID, activityID, actionID, paymentID);
-			builder.append("SELECT PROVISIONING_REQUEST_ID,ACTIVITY_ID,SERVICE_ID,PAYMENT_TYPE,TENANT_ID,PARTNER_ID,LOB_ID,MAX_RETRIES,TIME_GAP_BETWEEN_RETRY,")
-			.append("SEQUENCE_ID,SUB_SEQUENCE_ID,DEPENDENT_SEQUENCE_ID,DEPENDENT_SUB_SEQUENCE_ID,LOB_PROVISIONING_PRIORITY,SERVICE_PROVISIONING_PRIORITY,")
-			.append("ACTION_ID,INTERFACE_TYPE,OBJECT_TYPE,TOKEN_ID,SERVER_URL,EXECUTION_ORDER,REQUEST_OBJECT,PURPOSE,WORK_ORDER_TYPE,EFFECTIVE_FROM,")
-			.append("EFFECTIVE_TO,STATUS,CREATED_BY,CREATED_ON,CREATED_IPADDR,MODIFIED_BY,MODIFIED_ON,MODIFIED_IPADDR,RESPONSE_UPDATE_CATEGORY,SERVER_NAME")
-			.append(",REQUEST_METHOD,TIME_GAP_UNIT,IS_ASYNC,PROCESS_TYPE FROM provisioning_request_objects WHERE SERVICE_ID = :serviceID");
-			builder.append(" AND ACTIVITY_ID = :activityID ");
-			builder.append(" AND ACTION_ID = :actionID ");
-			builder.append(" and payment_type in ( :paymentID , -1 ) ");
-			builder.append(" AND STATUS = :status ");
-			builder.append(" ORDER BY SEQUENCE_ID,SUB_SEQUENCE_ID");
-			modelQuery = em.createNativeQuery(builder.toString(), ProvisioningRequestObjectsBO.class);
-			modelQuery.setParameter("serviceID", serviceID).setParameter("activityID", activityID)
-					.setParameter("actionID", actionID).setParameter("paymentID", paymentID)
-					.setParameter(STATUS2, cache.intConfigVal(Constants.PROVI_REQ_OBJ_STATUS, Constants.GLOBAL_TENANT));
-			provisioningReqObj = modelQuery.getResultList();
-			if (provisioningReqObj == null) {
-				return  Collections.emptyList();
-			}
-			log.debug("ProvisioningReqObj Response Result List size {} ", provisioningReqObj.size());
-			log.info("Ended WorkOrderDaoImpl :: getProvRequesObjects () ");
-		} catch (Exception e) {
-			log.error("Error from WorkOrderDaoImpl - getProvRequesObjects() ", e);
-			return Collections.emptyList();
-		}
-		return provisioningReqObj;
-	}
+    @Transactional
+    public boolean updateProvRequest(BigInteger requestID, int status) {
+        boolean flag = false;
+        StringBuilder builder = new StringBuilder();
+        try {
+            log.info("Starting updateProvRequest() requestID={}, status={}", requestID, status);
+            builder.append("UPDATE provisioning_requests SET STATUS = :status ");
+            builder.append(" WHERE REQUEST_ID = :requestID ");
+            Query modelQuery = em.createNativeQuery(builder.toString());
+            modelQuery.setParameter(STATUS2, status).setParameter("requestID", requestID);
+            modelQuery.executeUpdate();
+            flag = true;
+            log.info("Finished updateProvRequest() requestID={}, status={}", requestID, status);
+        } catch (Exception e) {
+            log.error("Error from WorkOrderDaoImpl - updateProvRequest()", e);
+        }
+        return flag;
+    }
 
+    @Transactional
+    public boolean saveProvisioningRequestGenerationError(ProvisioningRequestGenerationError obj) {
+        try {
+            log.info("Started WorkOrderDaoImpl :: saveProvisioningRequestGenerationError ()");
+            if (obj == null) {
+                return false;
+            }
+            String sequenceNo = this.getSeqNumber(cache.strConfigVal(Constants.ERROR_REC_ID_SEQ_NAME, Constants.GLOBAL_TENANT));
+            if (sequenceNo == null) {
+                return false;
+            }
+            BigInteger seqNo = new BigInteger(sequenceNo);
+            obj.setErrorRecordID(seqNo);
+            em.merge(obj);
+            log.info("Ended WorkOrderDaoImpl :: saveProvisioningRequestGenerationError ()");
+            return true;
+        } catch (Exception e) {
+            log.error("Error from WorkOrderDaoImpl - saveProvisioningRequestGenerationError()", e);
+            return false;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<ProvisioningRequestObjectsBO> getProvRequesObjects(Integer serviceID, Integer activityID,
+            Integer actionID, Integer paymentID) {
+        Query modelQuery = null;
+        List<ProvisioningRequestObjectsBO> provisioningReqObj = new ArrayList<>();
+        StringBuilder builder = new StringBuilder();
+        try {
+            log.info("Started WorkOrderDaoImpl :: getProvRequesObjects ()");
+            builder.append("SELECT PROVISIONING_REQUEST_ID,ACTIVITY_ID,SERVICE_ID,PAYMENT_TYPE,TENANT_ID,PARTNER_ID,LOB_ID,MAX_RETRIES,TIME_GAP_BETWEEN_RETRY,")
+                    .append("SEQUENCE_ID,SUB_SEQUENCE_ID,DEPENDENT_SEQUENCE_ID,DEPENDENT_SUB_SEQUENCE_ID,LOB_PROVISIONING_PRIORITY,SERVICE_PROVISIONING_PRIORITY,")
+                    .append("ACTION_ID,INTERFACE_TYPE,OBJECT_TYPE,TOKEN_ID,SERVER_URL,EXECUTION_ORDER,REQUEST_OBJECT,PURPOSE,WORK_ORDER_TYPE,EFFECTIVE_FROM,")
+                    .append("EFFECTIVE_TO,STATUS,CREATED_BY,CREATED_ON,CREATED_IPADDR,MODIFIED_BY,MODIFIED_ON,MODIFIED_IPADDR,RESPONSE_UPDATE_CATEGORY,SERVER_NAME")
+                    .append(",REQUEST_METHOD,TIME_GAP_UNIT,IS_ASYNC,PROCESS_TYPE FROM provisioning_request_objects WHERE SERVICE_ID = :serviceID");
+            builder.append(" AND ACTIVITY_ID = :activityID ");
+            builder.append(" AND ACTION_ID = :actionID ");
+            builder.append(" and payment_type in ( :paymentID , -1 ) ");
+            builder.append(" AND STATUS = :status ");
+            builder.append(" ORDER BY SEQUENCE_ID,SUB_SEQUENCE_ID");
+            modelQuery = em.createNativeQuery(builder.toString(), ProvisioningRequestObjectsBO.class);
+            modelQuery.setParameter("serviceID", serviceID).setParameter("activityID", activityID)
+                    .setParameter("actionID", actionID).setParameter("paymentID", paymentID)
+                    .setParameter(STATUS2, cache.intConfigVal(Constants.PROVI_REQ_OBJ_STATUS, Constants.GLOBAL_TENANT));
+            provisioningReqObj = modelQuery.getResultList();
+            if (provisioningReqObj == null) {
+                return Collections.emptyList();
+            }
+            log.debug("ProvisioningReqObj Response Result List size {} ", provisioningReqObj.size());
+            log.info("Ended WorkOrderDaoImpl :: getProvRequesObjects () ");
+        } catch (Exception e) {
+            log.error("Error from WorkOrderDaoImpl - getProvRequesObjects() ", e);
+            return Collections.emptyList();
+        }
+        return provisioningReqObj;
+    }
 }
