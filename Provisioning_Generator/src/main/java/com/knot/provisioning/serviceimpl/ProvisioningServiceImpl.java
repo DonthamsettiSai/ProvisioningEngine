@@ -33,7 +33,6 @@ import com.knot.provisioning.bo.Contract;
 import com.knot.provisioning.bo.DeviceBO;
 import com.knot.provisioning.bo.ProvDetailsBO;
 import com.knot.provisioning.bo.ProvisioningRequestObjectsBO;
-import com.knot.provisioning.bo.ServiceDevicesBO;
 import com.knot.provisioning.dao.WorkOrderDao;
 import com.knot.provisioning.dto.ActivityDTO;
 import com.knot.provisioning.dto.ProvLobDto;
@@ -48,7 +47,6 @@ import com.knot.provisioning.network.DefNetwork;
 import com.knot.provisioning.network.OMSNetwork;
 import com.knot.provisioning.service.CacheService;
 import com.knot.provisioning.service.ProvisioningService;
-import com.knot.provisioning.service.TFiberDynamicService;
 import com.knot.provisioning.threads.ProvisioningRequestThread;
 import com.knot.provisioning.utill.Constants;
 import com.knot.provisioning.utill.FileUtil;
@@ -128,7 +126,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
         }
 
         List<TenantsDTO> allTenants = defNet.getAllTenants();
-        log.info("Fetched tenant list for provisioning generation. tenantCount={}", allTenants == null ? 0 : allTenants.size());
+        log.info("Fetched tenant list for provisioning generation. tenantCount={}",
+                allTenants == null ? 0 : allTenants.size());
 
         int size = (allTenants == null || allTenants.isEmpty()) ? 1 : allTenants.size();
         ScheduledExecutorService executor = Executors.newScheduledThreadPool(Math.max(1, size));
@@ -168,15 +167,11 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                 hashMapFromJSON = null;
                 Integer priority = null;
 
-                List<ActivityConfig> activityConfigs = cache.getAllActvityConfigs();
-                Map<BigInteger, Integer> activityPriorityMap = activityConfigs == null ? Collections.emptyMap()
-                        : activityConfigs.stream().filter(Objects::nonNull)
-                                .filter(config -> config.getActivityId() != null)
-                                .collect(Collectors.toMap(ActivityConfig::getActivityId, ActivityConfig::getPriority,
-                                        (existing, replacement) -> replacement));
+                final Map<BigInteger, Integer> activityPriorityMap = buildActivityPriorityMap(
+                        cache.getAllActvityConfigs());
 
-                log.info("Loaded activity priority map. tenantId={}, host={}, activityPriorityMap={}", tenantID,
-                        hostName, activityPriorityMap);
+                log.info("Loaded activity priority map. tenantId={}, activityPriorityMap={}", tenantID,
+                        activityPriorityMap);
 
                 List<WorkOrderDTO> workOrders = omsNet.getWorkOrders(tenantID, maxRecords);
                 if (workOrders == null || workOrders.isEmpty()) {
@@ -185,13 +180,16 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                 }
 
                 log.info("Fetched work orders. tenantId={}, host={}, count={}, workOrderIds={}", tenantID, hostName,
-                        workOrders.size(), workOrders.stream().map(WorkOrderDTO::getWorkOrderID).collect(Collectors.toList()));
+                        workOrders.size(), workOrders.stream().map(WorkOrderDTO::getWorkOrderID)
+                                .collect(Collectors.toList()));
 
                 workOrders.sort(Comparator
-                        .comparingInt(wo -> resolveActivityPriority(wo.getActivityID(), activityPriorityMap))
-                        .thenComparing(WorkOrderDTO::getWorkOrderID));
+                        .comparingInt((WorkOrderDTO wo) -> resolveActivityPriority(wo.getActivityID(),
+                                activityPriorityMap))
+                        .thenComparing(wo -> wo.getWorkOrderID() == null ? BigInteger.ZERO : wo.getWorkOrderID()));
 
-                log.info("Work orders after priority sorting. tenantId={}, host={}, workOrderIds={}", tenantID, hostName,
+                log.info("Work orders after priority sorting. tenantId={}, host={}, workOrderIds={}", tenantID,
+                        hostName,
                         workOrders.stream().map(WorkOrderDTO::getWorkOrderID).collect(Collectors.toList()));
 
                 Map<Integer, List<WorkOrderDTO>> activityWorkOrdersMap = new LinkedHashMap<>();
@@ -211,7 +209,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                     BigInteger orderTenantId = workOrder.getTenantID();
                     if (activityId == null || orderTenantId == null) {
                         invalidActivityCount++;
-                        log.warn("Skipping work order with missing activity or tenant. workOrderId={}, activityId={}, tenantId={}",
+                        log.warn(
+                                "Skipping work order with missing activity or tenant. workOrderId={}, activityId={}, tenantId={}",
                                 workOrder.getWorkOrderID(), activityId, orderTenantId);
                         continue;
                     }
@@ -219,13 +218,15 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                     int resolvedPriority = resolveActivityPriority(activityId, activityPriorityMap);
                     if (resolvedPriority == 0 && !activityPriorityMap.containsKey(BigInteger.valueOf(activityId))) {
                         missingPriorityCount++;
-                        log.warn("No priority configured for activity. processing with default priority 0. workOrderId={}, activityId={}, tenantId={}",
+                        log.warn(
+                                "No priority configured for activity. processing with default priority 0. workOrderId={}, activityId={}, tenantId={}",
                                 workOrder.getWorkOrderID(), activityId, orderTenantId);
                     }
                     priority = resolvedPriority;
 
                     try {
-                        List<ActivityDTO> activities = defNet.getActivityCode(activityId.toString(), orderTenantId.toString());
+                        List<ActivityDTO> activities = defNet.getActivityCode(activityId.toString(),
+                                orderTenantId.toString());
                         ActivityDTO activityDTO = CollectionUtils.isEmpty(activities) ? null : activities.get(0);
                         if (activityDTO == null || !StringUtils.hasText(activityDTO.getActivityCode())) {
                             invalidActivityCount++;
@@ -240,7 +241,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                         if (activityCode.equalsIgnoreCase(Constants.RENEWAL) || activityCode.equalsIgnoreCase("OBD")
                                 || (StringUtils.hasText(workOrder.getCreatedBy())
                                         && workOrder.getCreatedBy().equalsIgnoreCase("MSO"))) {
-                            omsNet.updateWorkOrder(workOrder.getWorkOrderID(), "Manual Activation", 45, orderTenantId, true);
+                            omsNet.updateWorkOrder(workOrder.getWorkOrderID(), "Manual Activation", 45, orderTenantId,
+                                    true);
                             omsNet.postProvisioningUpdates(workOrder.getWorkOrderID(), activityCode,
                                     LocalDateTime.now().toString(), tenantID, workOrder.getWorkOrderID());
                             omsNet.updateWorkOrder(workOrder.getWorkOrderID(), "Notification not sent !!", 19,
@@ -276,7 +278,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                     }
                 }
 
-                log.info("Work order validation summary. tenantId={}, host={}, fetched={}, activityGroups={}, missingPriority={}, invalidActivity={}, specialOrders={}, catalogueDeferred={}",
+                log.info(
+                        "Work order validation summary. tenantId={}, host={}, fetched={}, activityGroups={}, missingPriority={}, invalidActivity={}, specialOrders={}, catalogueDeferred={}",
                         tenantID, hostName, workOrders.size(), activityWorkOrdersMap.size(), missingPriorityCount,
                         invalidActivityCount, specialOrderCount, catalogueDeferredCount);
 
@@ -286,9 +289,11 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                     priority = resolveActivityPriority(activityId, activityPriorityMap);
                     String activityCode = activityCodeMap.get(activityId);
 
-                    log.info("Processing activity group. tenantId={}, host={}, activityId={}, activityCode={}, priority={}, workOrderIds={}",
+                    log.info(
+                            "Processing activity group. tenantId={}, host={}, activityId={}, activityCode={}, priority={}, workOrderIds={}",
                             tenantID, hostName, activityId, activityCode, priority,
-                            activityOrders.stream().map(WorkOrderDTO::getWorkOrderID).collect(Collectors.toList()));
+                            activityOrders.stream().map(WorkOrderDTO::getWorkOrderID)
+                                    .collect(Collectors.toList()));
 
                     int requestsSubmitted = 0;
                     try {
@@ -312,7 +317,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                             continue;
                         }
 
-                        for (Map.Entry<BigInteger, Map<ProvisioningRequest, List<ProvisioningRequestDetails>>> requestEntry : provisioningMap.entrySet()) {
+                        for (Map.Entry<BigInteger, Map<ProvisioningRequest, List<ProvisioningRequestDetails>>> requestEntry : provisioningMap
+                                .entrySet()) {
                             BigInteger workOrderId = requestEntry.getKey();
                             if (workOrderId != null && !inFlightWorkOrders.add(workOrderId)) {
                                 log.warn("Duplicate provisioning generation skipped. tenantId={}, host={}, workOrderId={}",
@@ -335,6 +341,21 @@ public class ProvisioningServiceImpl implements ProvisioningService {
             } catch (Exception e) {
                 log.error("Error in ParentThread run() for tenantId={}, host={}", tenantID, hostName, e);
             }
+        }
+
+        private Map<BigInteger, Integer> buildActivityPriorityMap(List<ActivityConfig> activityConfigs) {
+            if (activityConfigs == null || activityConfigs.isEmpty()) {
+                return Collections.emptyMap();
+            }
+
+            return activityConfigs.stream()
+                    .filter(Objects::nonNull)
+                    .filter(config -> config.getActivityId() != null)
+                    .filter(config -> config.getPriority() != null)
+                    .collect(Collectors.toMap(
+                            ActivityConfig::getActivityId,
+                            ActivityConfig::getPriority,
+                            (existing, replacement) -> replacement));
         }
 
         private int resolveActivityPriority(Integer activityId, Map<BigInteger, Integer> activityPriorityMap) {
@@ -407,8 +428,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                                     workOrder.getCustomerID(), workOrder.getCustomerAccountID());
                             errorDescription = "No Customer Details Found for CustomerID ";
                             omsNet.updateWorkOrder(workOrderID, errorDescription,
-                                    cache.intConfigVal(Constants.GENERATION_FAILED, Constants.GLOBAL_TENANT), tenantIDValue,
-                                    false);
+                                    cache.intConfigVal(Constants.GENERATION_FAILED, Constants.GLOBAL_TENANT),
+                                    tenantIDValue, false);
                             continue;
                         }
                     }
@@ -449,16 +470,17 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                                 if (serviceParamMap != null) {
                                     ocsKey = contracts.getRatePlanID().toString();
                                     rpSId = contracts.getRatePlanID() + Constants.KEY_SEP + contracts.getServiceID();
-                                    List<ProvisioningRequestObjectsBO> provRequesObjectList = cache.getProvRequesObjects(serviceID,
-                                            workOrder.getActivityID(), contracts.getActionID(), -1, workOrder.getTenantID(),
-                                            workOrder.getDeviceType());
+                                    List<ProvisioningRequestObjectsBO> provRequesObjectList = cache.getProvRequesObjects(
+                                            serviceID, workOrder.getActivityID(), contracts.getActionID(), -1,
+                                            workOrder.getTenantID(), workOrder.getDeviceType());
                                     if (provRequesObjectList.isEmpty()) {
                                         provRequesObjectList = cache.getProvRequesObjects(serviceID,
                                                 workOrder.getActivityID(), contracts.getActionID(),
                                                 workOrder.getCustomerAccountType(), workOrder.getTenantID(),
                                                 workOrder.getDeviceType());
                                         if (provRequesObjectList.isEmpty()) {
-                                            log.error("Provisioning Request Objects not found. tenantId={}, workOrderId={}, serviceId={}",
+                                            log.error(
+                                                    "Provisioning Request Objects not found. tenantId={}, workOrderId={}, serviceId={}",
                                                     tenantIDValue, workOrderID, serviceID);
                                             errorDescription = "Provisioning Request Objects not found for this activity ";
                                         }
@@ -475,7 +497,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                                                 serviceCreateTypeList.add(provisioningObj.getServerName());
                                             }
                                             if (serviceParamMap != null) {
-                                                Iterator<Entry<String, List<Map<String, String>>>> it = serviceParamMap.entrySet().iterator();
+                                                Iterator<Entry<String, List<Map<String, String>>>> it = serviceParamMap
+                                                        .entrySet().iterator();
                                                 while (it.hasNext()) {
                                                     Map.Entry<String, List<Map<String, String>>> entry = it.next();
                                                     list = entry.getValue();
@@ -484,14 +507,16 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                                                             inputJson = inputJson.replace(" ", "");
                                                         }
                                                         serverMap = list.get(i);
-                                                        Iterator<Entry<String, String>> it1 = serverMap.entrySet().iterator();
+                                                        Iterator<Entry<String, String>> it1 = serverMap.entrySet()
+                                                                .iterator();
                                                         while (it1.hasNext()) {
                                                             Map.Entry<String, String> entry1 = it1.next();
                                                             String key = entry1.getKey();
                                                             if (inputJson.contains(key) && serverMap.get(key) != null) {
                                                                 inputJson = inputJson.replaceAll(
                                                                         cache.strConfigVal(Constants.SERVICE_REGEX,
-                                                                                provisioningObj.getTenantID().toString()) + key,
+                                                                                provisioningObj.getTenantID().toString())
+                                                                                + key,
                                                                         serverMap.get(key));
                                                             }
                                                         }
@@ -505,7 +530,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                                             if (inputJson != null && inputJson.contains(cache.strConfigVal(Constants.NETWORK_ID,
                                                     provisioningObj.getTenantID().toString()))
                                                     && !provisioningObj.getPurpose().equalsIgnoreCase(
-                                                            cache.strConfigVal(Constants.CUSTOMER, Constants.GLOBAL_TENANT))) {
+                                                            cache.strConfigVal(Constants.CUSTOMER,
+                                                                    Constants.GLOBAL_TENANT))) {
                                                 networkID = omsNet.getNetworkID(contracts.getCustomerID(),
                                                         contracts.getCustomerAccountID(), provisioningObj.getLobID(),
                                                         provisioningObj.getServiceID(), tenantIDValue);
@@ -534,12 +560,14 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                                                         accountID, tenantIDValue, activityID);
                                                 Map<String, String> finalResponseMap = FileUtil
                                                         .convertResponseJsonToMap(customerProvDetailss, null);
-                                                List<String> orderParamValues = FileUtil.foundResponseReplaceValues(serverURL);
+                                                List<String> orderParamValues = FileUtil
+                                                        .foundResponseReplaceValues(serverURL);
                                                 for (String val : orderParamValues) {
                                                     if (finalResponseMap.get(val) != null) {
                                                         serverURL = serverURL.replace(
                                                                 cache.strConfigVal(Constants.ORDER_PARAM,
-                                                                        provisioningObj.getTenantID().toString()) + val,
+                                                                        provisioningObj.getTenantID().toString())
+                                                                        + val,
                                                                 finalResponseMap.get(val));
                                                     }
                                                 }
@@ -627,7 +655,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                                     requestObjects.getTenantID().toString()))) {
                                 String customerProvDetailss = omsNet.getCustomerProvDetailss(customerID, accountID,
                                         tenantIDValue, activityID);
-                                Map<String, String> finalResponseMap = FileUtil.convertResponseJsonToMap(customerProvDetailss, null);
+                                Map<String, String> finalResponseMap = FileUtil.convertResponseJsonToMap(
+                                        customerProvDetailss, null);
                                 List<String> ordersParam = FileUtil.foundResponseReplaceValues(inptJson);
                                 for (String val : ordersParam) {
                                     if (finalResponseMap.get(val) != null) {
@@ -642,7 +671,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                                     requestObjects.getTenantID().toString()))) {
                                 String customerProvDetailss = omsNet.getCustomerProvDetailss(customerID, accountID,
                                         tenantIDValue, activityID);
-                                Map<String, String> finalResponseMap = FileUtil.convertResponseJsonToMap(customerProvDetailss, null);
+                                Map<String, String> finalResponseMap = FileUtil.convertResponseJsonToMap(
+                                        customerProvDetailss, null);
                                 List<String> orderParamValues = FileUtil.foundResponseReplaceValues(serverURL);
                                 for (String val : orderParamValues) {
                                     if (finalResponseMap.get(val) != null) {
@@ -666,7 +696,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                                                     requestObjects.getTenantID().toString()),
                                             networkID);
                                 } else {
-                                    throw new ProvisionException("Unable to Replace Network Id in url. network id not found from oms.");
+                                    throw new ProvisionException(
+                                            "Unable to Replace Network Id in url. network id not found from oms.");
                                 }
                             }
                             ProvisioningRequestDetails provisioningRequestDetails = getProvisioningRequestDetails(
@@ -710,8 +741,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
                             log.error("getProvisioningRequestObjects :: error while saving generation error.", e);
                         }
                         omsNet.updateWorkOrder(workOrderID, errorDescription,
-                                cache.intConfigVal(Constants.GENERATION_FAILED, Constants.GLOBAL_TENANT), tenantIDValue,
-                                false);
+                                cache.intConfigVal(Constants.GENERATION_FAILED, Constants.GLOBAL_TENANT),
+                                tenantIDValue, false);
                     }
                 } catch (Exception e) {
                     log.error("ProvisioningServiceImpl :: getReqObjectsbycompareKeys : {}", e.getMessage(), e);
@@ -722,11 +753,12 @@ public class ProvisioningServiceImpl implements ProvisioningService {
         }
 
         private String replaceOrderParameters(String customerDetails, List<DeviceBO> deviceList, String tenantID,
-                String rpID, String inputJSON, String rpSpId, String url, WorkOrderDTO workOrderDTO) throws Exception {
-            if (customerDetails != null && !customerDetails.trim().isEmpty() && inputJSON.contains(cache.strConfigVal(Constants.ORDER_PARAM, tenantID))) {
+                String rpID, String inputJSON, String rpSpId, String url, WorkOrderDTO workOrderDTO)
+                throws Exception {
+            if (customerDetails != null && !customerDetails.trim().isEmpty()
+                    && inputJSON.contains(cache.strConfigVal(Constants.ORDER_PARAM, tenantID))) {
                 String responseString = omsNet.getCustomerProvDetailss(workOrderDTO.getCustomerID(),
-                        workOrderDTO.getCustomerAccountID(), workOrderDTO.getTenantID(),
-                        workOrderDTO.getActivityID());
+                        workOrderDTO.getCustomerAccountID(), workOrderDTO.getTenantID(), workOrderDTO.getActivityID());
                 Map<String, String> finalResponseMap = FileUtil.convertResponseJsonToMap(responseString, null);
                 List<String> ordersParam = FileUtil.foundResponseReplaceValues(inputJSON);
                 for (String val : ordersParam) {
@@ -851,7 +883,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
             ProvisioningRequest provisioningRequest = new ProvisioningRequest();
             provisioningRequest.setCustomerID(
                     workOrder.getCustomerID() != null ? workOrder.getCustomerID() : BigInteger.valueOf(-1));
-            provisioningRequest.setCustomerAccountID(workOrder.getCustomerAccountID() != null ? workOrder.getCustomerAccountID()
+            provisioningRequest.setCustomerAccountID(workOrder.getCustomerAccountID() != null
+                    ? workOrder.getCustomerAccountID()
                     : BigInteger.valueOf(-1));
             provisioningRequest.setRequestCreationDate(new Date());
             provisioningRequest.setStatus(cache.intConfigVal(Constants.PROV_REQ_GEN_SUCCESS, Constants.GLOBAL_TENANT));
@@ -915,7 +948,8 @@ public class ProvisioningServiceImpl implements ProvisioningService {
     }
 
     private static class ThreadPoolHolder {
-        private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() * 2);
+        private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(
+                Runtime.getRuntime().availableProcessors() * 2);
 
         private static ExecutorService getExecutor() {
             return EXECUTOR;
