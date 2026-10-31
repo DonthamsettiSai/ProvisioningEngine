@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration>
+	<Appenders>
+		<!-- Console Appender -->
+		<Console name="Console" target="SYSTEM_OUT">
+			<PatternLayout 
+                pattern="[timestamp:%d{yyyy-MM-dd HH:mm:ss.SSS}] [hostname:%X{HOST_NAME}] [logLevel:%-5p] [X-Correlation-Id:%X{TRX_ID}] [message:%msg]%n"/>
+		</Console>
+
+		<!-- Rolling File Appender Here  TimeBasedTriggeringPolicy interval 1 means one day -->
+		<RollingFile name="FileInfoAppender" fileName="${env:LOG_DIR:-/var/log}/prov-generator.log" filePattern="${env:LOG_DIR:-/var/log}/prov-generator-log-%d{yyyy-MM-dd}-%i.log">
+			<PatternLayout 
+                pattern="[timestamp:%d{yyyy-MM-dd HH:mm:ss.SSS}] [hostname:%X{HOST_NAME}] [logLevel:%-5p] [X-Correlation-Id:%X{TRX_ID}] [message:%msg]%n"/>
+			<Policies>
+				<SizeBasedTriggeringPolicy size="${env:LOG_FILE_SIZE:-25MB}" />
+				<!-- <TimeBasedTriggeringPolicy interval="1" /> -->
+			</Policies>
+			<DefaultRolloverStrategy max="${env:LOG_FILE_COUNT:-10}" />
+		</RollingFile>
+		<!-- <Socket name="prov-gen" host="logstash-service.logging.svc.cluster.local" port="5044">
+			<JsonLayout compact="true" eventEol="true">
+				<KeyValuePair key="app_name" value="prov-gen"></KeyValuePair>
+				<KeyValuePair key="app_host" value="${hostName}"></KeyValuePair>
+			</JsonLayout>
+		</Socket> -->
+		<!-- <Socket name="prov-gen" host="localhost" port="5000">
+			<JsonLayout compact="true" eventEol="true">
+				<KeyValuePair key="app_name" value="prov-gen"></KeyValuePair>
+				<KeyValuePair key="app_host" value="${hostName}"></KeyValuePair>
+			</JsonLayout>
+		</Socket> -->
+	</Appenders>
+
+	<Loggers>
+		<!-- Log everything in custom package -->
+		<Logger name="com.knot" level="${env:LOG_LEVEL:-INFO}" additivity="false">
+			<AppenderRef ref="Console" />
+			<AppenderRef ref="FileInfoAppender" />
+			<!-- <AppenderRef ref="prov-gen" /> -->
+		</Logger>
+
+		<Root level="${env:LOG_LEVEL:-ERROR}">
+			<AppenderRef ref="Console" />
+			<AppenderRef ref="FileInfoAppender" />
+			<!-- <AppenderRef ref="prov-gen" /> -->
+		</Root>
+
+	</Loggers>
+</Configuration>

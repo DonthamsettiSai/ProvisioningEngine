@@ -1,0 +1,80 @@
+package com.knot.provisioning.utill;
+
+public class Constants {
+
+	public static final String GLOBAL_TENANT = "-1";
+	public static final String KEY_SEP	 = ":";
+	public static final int ACTIVE_STATUS = 11;
+	public static final String WORK_ORDER_INPROGRESS  ="WK_OD_PR";
+	public static final String WORK_ORD_REMARKS ="WK_REMARKS";
+	public static final String SLEEP_TIME = "SLEEP_TIME_GEN";
+	public static final String THREADSIZE = "THREADSIZE_GEN";
+	public static final String MAX_RECORDS_PER_CALL = "GEN_MAX_RECORDS";
+	public static final String NSWO = "NSWO";
+	public static final String EXTERNALID = "EXTERNALID";
+	public static final String NS_ACTIVITY = "NS_ACTIVITY";
+	public static final String OMS_URL = "OMS_URL";
+	public static final String OMS_USERNAME = "OMS_USERNAME";
+	public static final String OMS_PWD = "OMS_PWD";
+	public static final String CAT_URL = "CAT_URL";
+	public static final String CAT_USER_NAME = "CAT_USER_NAME";
+	public static final String CAT_PWD = "CAT_PWD";
+	public static final String KYC_CHECK = "IS_KYC_CHK_REQ";
+	public static final String CHAR_Y = "Y";
+	public static final String DEF_URL = "DEF_URL";
+	public static final String DEF_UN = "DEF_UN";
+	public static final String DEF_PWD = "DEF_PWD";
+	public static final String CHANGE_SIM_ACTIVITY = "CHANGE_SIM_ACT";
+	public static final String DEF_CREAT_BY = "DEF_CREAT_BY";
+	public static final String GLOBAL_FLAG = "GLOBAL_FLAG";
+	public static final String N_A = "N_A";
+	public static final String PROV_REQ_SEQ_NAME = "PROV_REQ_ID";
+	public static final String PROV_REQ_DTL_SEQ_NAME = "REQ_DTL_ID";
+	public static final String ERROR_REC_ID_SEQ_NAME = "ERROR_REC_ID";
+	public static final String ORDER_PARAM = "ORDER_PARAM";
+	public static final String ORDER_REGEX = "ORDER_REGEX";
+	public static final String SERVICE_PARM = "SERVICE_PARM";
+	public static final String NOT_AVAILABLE = "NotAvailable";
+	public static final String SERVICE_REGEX = "SERVICE_REGEX";
+	public static final String CUSTOMER = "CUSTOMER";
+	public static final String NETWORK_ID = "NETWORK_ID";
+	public static final String PARAM_SEP = "PARAM_SEP";
+	public static final String PARAM_REPLACE_ERROR = "PRM_REPLACE_ERR";
+	public static final String CONTRACTS_NOT_IN_CAT = "NO_PLANS_IN_CAT";
+	public static final String DEFAULT_ERROR = "DEFAULT_ERROR";
+	public static final String REQUEST_GEN_SUCCESS = "REQ_GEN_SUCES";
+	public static final String GENERATION_FAILED = "GEN_FAILED";
+	public static final String NO_CONFIGS = "NO_CONFIGS";
+	public static final String NEGOTIATION_PROGRESS = "NGTN_PROGRESS";
+	public static final String PROVI_REQ_OBJ_STATUS = "PROV_REQ_OBJ_";
+	public static final String NEW_WORK_ORDERS = "NEW_WORK_ORDS";
+	public static final String PROV_REQ_GEN_SUCCESS = "REQ_GEN_SUCCESS";
+	public static final String DEFAULT_VERSION = "DEFAULT_VERSION";
+	public static final String ADD_ON = "ADD_ON";
+	public static final String ONE_TIME = "ONE TIME";
+	public static final String BUNDLE = "BUNDLE";
+	public static final String STANDALONE = "STANDALONE";
+	public static final String VAS = "VAS";
+	public static final String GEN_ADMIN = "GEN_ADMIN";
+	public static final String SUPER_UN = "SUPER_UN";
+	public static final String SUPER_PWD = "SUPER_PWD";
+	public static final String UMS_URL = "UMS_URL";
+	public static final String GLB_1 = "-1";
+	public static final String OCS_RP_ID = "OCS_RP_ID";
+	public static final String OCS_SP_ID = "OCS_SP_ID";
+	public static final String TOKEN = "TOKEN";
+	public static final String HEADER = "HEADER";
+	public static final String PMS_URL = "PMS_URL";
+	public static final String MAX_TENANTS = "MAX_TENANTS";
+	public static final String SUCCESS_MSG = "SUCCESS_MSG";
+	
+	public static final String LOB_CODE_MOBILE_MARKET = "MOB";
+	
+	public static final String FORMAT = "AAA_BBB_CCC";
+	public static final String METHOD = "getTenantUniqueCode";
+	public static final String REQ_DTL_ID = "reqDtlId";
+	public static final String UNQ_TNT_ID = "UNQ_TNT_ID";
+	public static final String RENEWAL = "RENEWAL";
+	public static final String PROV_GEN_GRACEFULL_STOP = "PROVGEN_STOP";
+	
+}

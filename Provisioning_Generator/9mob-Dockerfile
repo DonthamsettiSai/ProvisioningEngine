@@ -1,0 +1,39 @@
+# Use CentOS 8 as base image (with vault repo fix)
+FROM centos:8
+ 
+# Fix CentOS 8 repo issue (switch to vault)
+RUN sed -i 's|mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-* && \
+    sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
+ 
+# Set environment variables
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+ENV PATH="/usr/lib/jvm/java-17-openjdk/bin:${PATH}"
+ 
+# Install OpenJDK 17, Maven, SSH, fonts, tzdata, and font libraries
+RUN yum -y update && \
+    yum -y install java-17-openjdk java-17-openjdk-devel openssh-server tzdata dejavu-sans-fonts freetype fontconfig libXrender curl sudo && \
+    #ln -fs /usr/share/zoneinfo/Asia/Kolkata /etc/localtime && \
+    ln -fs /usr/share/zoneinfo/Africa/Lagos /etc/localtime && \
+    yum clean all
+ 
+# Create a new user with root privileges
+RUN useradd -m -s /bin/bash appuser \
+&& echo "appuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
+&& usermod -aG root appuser
+ 
+# Copy your libs and JAR to absolute paths
+COPY libs/ /libs/
+COPY target/provisioning-generator.jar /home/appuser/provisioning-generator.jar
+
+ 
+# Grant ownership of only the necessary directories to the new user
+RUN chown -R appuser:appuser /home/appuser /tmp /var /opt
+ 
+RUN chmod 777 -R /home/appuser /tmp /var /opt
+ 
+# Switch to the new user
+USER appuser
+ 
+EXPOSE 8072
+ENTRYPOINT ["java","-Dloader.path=/libs","-Dspring.profiles.active=${ACTIVE_PROFILE}","-jar","/home/appuser/provisioning-generator.jar"]
+ENV JAVA_TOOL_OPTIONS "-Xms256m -Xmx1024m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/log"
